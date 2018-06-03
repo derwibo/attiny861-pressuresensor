@@ -1,0 +1,10 @@
+*.o
+*.a
+*.res
+*.exe
+*.bat
+*.mk
+*.pyc
+*.pyd
+*.pdb
+thumbs.db
