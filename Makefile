@@ -13,10 +13,10 @@
 # FUSES ........ Parameters for avrdude to flash the fuses appropriately.
 
 DEVICE     = attiny861a
-CLOCK      = 1000000
+CLOCK      = 8000000
 PROGRAMMER = -c stk500v2 -P /dev/ttyUSB0 -p t861 
 OBJECTS    = main.o
-FUSES      = -U lfuse:w:0x64:m -U hfuse:w:0xdd:m -U efuse:w:0xff:m
+FUSES      = -U lfuse:w:0xe2:m -U hfuse:w:0xdf:m -U efuse:w:0xff:m
 
 
 ######################################################################

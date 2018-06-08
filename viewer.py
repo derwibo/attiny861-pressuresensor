@@ -56,7 +56,7 @@ class CommThread(threading.Thread):
                 while len(bindata) < 8 :
                     bindata.extend(os.read(self.tty, 1))
                 if len(bindata) == 8 :
-                    print('Data received')
+                    # print('Data received')
                     data = struct.unpack('HHHH', bindata)
                     string = '%x %x %x %x' % data
                     if not self.exit :

@@ -54,8 +54,8 @@ class CommThread(threading.Thread):
                 bindata.extend(os.read(self.tty, 1))
             if len(bindata) == 10 :
                 print('Data received')
-                data = struct.unpack('HHHHH', bindata)
-                string = '%x %x %x %x %x\n' % data
+                data = struct.unpack('BBBBBBBBBB', bindata)
+                string = '%x %x %x %x %x %x %x %x %x %x\n' % data
                 if not self.exit :
                     self.owner.mainwnd.textedit.insert(tk.END, string)
             else:

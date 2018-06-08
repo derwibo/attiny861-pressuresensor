@@ -24,7 +24,7 @@ void tcnt1_init_100ms();
 
 volatile uint8_t usi_status;
 #define USI_DATABUFFER_SIZE 0x0F
-volatile uint8_t usi_databuffer[USI_DATABUFFER_SIZE];
+volatile uint8_t usi_databuffer[USI_DATABUFFER_SIZE+1];
 volatile int8_t usi_idx_datastart;
 volatile int8_t usi_idx_dataend;
 
@@ -33,10 +33,11 @@ volatile uint8_t adcchannel;
 
 volatile uint8_t timer_signal;
 
+uart_msg_t datamsg;
+
 int main(void)
 {
   int8_t i;
-  uart_msg_t datamsg;
 /* CONFIGURE I/O PINS, all unused Port pins as input with pull up */
 
   DDRA  = 0b00000000;
@@ -61,22 +62,20 @@ int main(void)
   sei();
 
 /*  Start the first conversion */ 
-//  ADCSRA |= (1 << ADSC);
+  ADCSRA |= (1 << ADSC);
 
   datamsg.id = 0x12;
   datamsg.nb = 8;
 
   while(1)
   {
-    if(timer_signal || (TIFR & (1 << TOV1))) /* Timer 1 Overflow Flag */
+    if(timer_signal)
     {
       timer_signal = 0;
-      TIFR |= (1 << TOV1); /* Clear the Timer 1 Overflow Flag */
 
       for(i=0 ; i<8 ; i++)
       {
-        // datamsg.data[i] = adcresults[i];
-        datamsg.data[i] = 0xF0;
+        datamsg.data[i] = adcresults[i];
       }
 
       usi_uart_transmit_msg(&datamsg);
@@ -90,11 +89,9 @@ int main(void)
         PORTB |= 0b00001000;
       }
     }
-/*
     sleep_enable();
     sleep_cpu();
     sleep_disable();
-*/
   }
 
   return 0;
@@ -104,7 +101,7 @@ void tcnt0_init_9600baud()
 {
   OCR0A = 104;
   TCCR0A = 0b00000001; /* (1 << CTC0) */
-  TCCR0B = (0 << CS02)|(0 << CS01)|(1 << CS00);  /* Clock Select: No Prescaling */
+  TCCR0B = (0 << CS02)|(1 << CS01)|(0 << CS00);  /* Clock Select: Prescaling 8 */
 }
 
 void usi_uart_init()
@@ -120,13 +117,12 @@ void usi_uart_init()
   USICR = (1 << USIOIE) | (1 << USIWM0);   /* enable the usi, except the clock source */
 }
 
-uint8_t nibble_reverse_lookup[] = {0, 8, 4, 0xC, 2, 0xA, 6, 0xE, 1, 9, 5, 0xD, 3, 0xB, 7, 0xF};
+static uint8_t nibble_reverse_lookup[] = {0, 8, 4, 0xC, 2, 0xA, 6, 0xE, 1, 9, 5, 0xD, 3, 0xB, 7, 0xF};
 
-uint8_t byte_reverse(uint8_t data)
+inline uint8_t byte_reverse(uint8_t data)
 {
   uint8_t rb = 0;
-  rb |= (nibble_reverse_lookup[(data & 0xF)] << 4);
-  rb |= (nibble_reverse_lookup[((data >> 4) & 0xF)]);
+  rb = (nibble_reverse_lookup[(data & 0xF)] << 4) | (nibble_reverse_lookup[(data >> 4)]);
   return rb;
 }
 
@@ -139,8 +135,7 @@ int8_t usi_uart_transmit(uint8_t* data, int8_t nb)
   }
   for(i=0 ; i<nb ; i++)
   {
-//    usi_databuffer[((usi_idx_dataend + i) & USI_DATABUFFER_SIZE)]  = byte_reverse(data[i]);
-    usi_databuffer[((usi_idx_dataend + i) & USI_DATABUFFER_SIZE)]  = 0x0F;
+    usi_databuffer[((usi_idx_dataend + i) & USI_DATABUFFER_SIZE)]  = byte_reverse(data[i]);
   }
   cli();
   usi_idx_dataend += nb;
@@ -148,14 +143,14 @@ int8_t usi_uart_transmit(uint8_t* data, int8_t nb)
   {
     usi_status = 0x01;  /* Set UART status busy */
     USIDR = 0xF0;       /* Write some high bits to USI data register */
-    USISR = (1 << USIOIF) | 0b1110; /* send high bits until counter overflow */
+    USISR = (1 << USIOIF) | 0b1101; /* send high bits until counter overflow */
     USICR |= (0 << USICS1)|(1 << USICS0)|(0 << USICLK); /* enable the usi clock source */
   }
   sei();
   return nb;
 }
 
-int8_t usi_uart_transmit_msg(uart_msg_t* msg)
+inline int8_t usi_uart_transmit_msg(uart_msg_t* msg)
 {
   uint8_t* dataptr = (uint8_t*)msg;
   int8_t nb = msg->nb + 2;
@@ -170,17 +165,19 @@ void tcnt1_init_100ms()
 {
   TCCR1A = 0b00000000;
 /*  TCCR1B = 0b00001010;*/ /* enable the timer with prescaler 512 */
+//  TCCR1B = 0b00001111; /* enable the timer with prescaler 16384 */
   TCCR1B = 0b00001101; /* enable the timer with prescaler 4096 */
+
 /*  TCCR1C = 0b00000000;
   TCCR1D = 0b00000000;
   TCCR1E = 0b00000000;
   PLLCSR = 0b00000000;
   OCR1A  = 0b00000000;
   OCR1B  = 0b00000000; */
-/*  OCR1C  = 195;       */ /* Set the TOP Value so that we will get 100 ms rate */
-  OCR1C  = 244;        /* Set the TOP Value so that we will get 1000 ms rate */
+  OCR1C  = 195;        /* Set the TOP Value so that we will get 100 ms rate */
+//  OCR1C  = 244;        /* Set the TOP Value so that we will get 500 ms rate */
 /*  OCR1D  = 0b00000000; */
-/*  TIMSK |= 0b01000000; */
+  TIMSK |= (1 << TOIE1);
 }
 
 ISR(ADC_vect)
@@ -196,13 +193,13 @@ ISR(ADC_vect)
 
 ISR(TIMER1_COMPA_vect)
 {
-  TCNT1 = 0x00;
-  timer_signal = 1;
+//  TCNT1 = 0x00;
+//  timer_signal = 1;
 }
 
 ISR(TIMER1_OVF_vect)
 {
-
+  timer_signal = 1;
 }
 
 ISR(TIMER0_OVF_vect)
@@ -222,11 +219,9 @@ ISR(USI_OVF_vect)
   {
     case 1:
     {
-      /* Write a high bit, the start bit and the first 6 data bits to USI Data Register */
+      /* Write the start bit and the first 6 data bits to USI Data Register */
       c = usi_databuffer[usi_idx_datastart & USI_DATABUFFER_SIZE];
-      // USIDR = 0b10000000 | (c >> 2);
-      USIDR = 0b00000000 | (c >> 2);
-      //USISR = (1 << USIOIF) | 0b1010;  /* send 6 bits (1 x high, 1 x start bit, 4 of the data bits) */
+      USIDR = 0b00000000 | (c >> 1);
       USISR = (1 << USIOIF) | 0b1011;  /* send 5 bits (1 x start bit, 4 of the data bits) */
       usi_status = 2;
       break;
