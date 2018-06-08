@@ -5,22 +5,38 @@
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
+#include <avr/sleep.h>
 #include <inttypes.h>
 
+struct uart_msg
+{
+  uint8_t id;
+  uint8_t nb;
+  uint8_t data[8];
+};
+
+typedef struct uart_msg uart_msg_t;
+
 void usi_uart_init();
-void usi_uart_transmit(uint8_t data);
+int8_t usi_uart_transmit(uint8_t* data, int8_t nb);
+int8_t usi_uart_transmit_msg(uart_msg_t* msg);
 void tcnt1_init_100ms();
 
 volatile uint8_t usi_status;
-volatile uint8_t usi_databuffer;
+#define USI_DATABUFFER_SIZE 0x0F
+volatile uint8_t usi_databuffer[USI_DATABUFFER_SIZE];
+volatile int8_t usi_idx_datastart;
+volatile int8_t usi_idx_dataend;
 
-volatile uint16_t adcresults[8];
+volatile uint8_t adcresults[8];
 volatile uint8_t adcchannel;
 
 volatile uint8_t timer_signal;
 
 int main(void)
 {
+  int8_t i;
+  uart_msg_t datamsg;
 /* CONFIGURE I/O PINS, all unused Port pins as input with pull up */
 
   DDRA  = 0b00000000;
@@ -40,10 +56,15 @@ int main(void)
   ADMUX  = 0b11000000;
   ADCSRB = (1 << REFS2);
 
+  timer_signal = 0;
+
   sei();
 
 /*  Start the first conversion */ 
-  ADCSRA |= (1 << ADSC);
+//  ADCSRA |= (1 << ADSC);
+
+  datamsg.id = 0x12;
+  datamsg.nb = 8;
 
   while(1)
   {
@@ -51,9 +72,15 @@ int main(void)
     {
       timer_signal = 0;
       TIFR |= (1 << TOV1); /* Clear the Timer 1 Overflow Flag */
-      usi_uart_transmit('x');
 
-/*
+      for(i=0 ; i<8 ; i++)
+      {
+        // datamsg.data[i] = adcresults[i];
+        datamsg.data[i] = 0xF0;
+      }
+
+      usi_uart_transmit_msg(&datamsg);
+
       if(PORTB & 0b00001000)
       {
         PORTB &= 0b11110111;
@@ -62,17 +89,11 @@ int main(void)
       {
         PORTB |= 0b00001000;
       }
-*/
     }
 /*
-    if(adcresults[1] > 500)
-    {
-      PORTB |= 0b00001000;
-    }
-    else
-    {
-      PORTB &= 0b11110111;
-    }
+    sleep_enable();
+    sleep_cpu();
+    sleep_disable();
 */
   }
 
@@ -88,6 +109,8 @@ void tcnt0_init_9600baud()
 
 void usi_uart_init()
 {
+  usi_idx_datastart = 0;
+  usi_idx_dataend   = 0;
 /*
  Timer/Counter0 is used for driving the USI Baud Rate. ATtiny861 uses
  the Compare Match function.
@@ -107,17 +130,40 @@ uint8_t byte_reverse(uint8_t data)
   return rb;
 }
 
-void usi_uart_transmit(uint8_t data)
+int8_t usi_uart_transmit(uint8_t* data, int8_t nb)
 {
-  while(usi_status != 0)
+  int8_t i;
+  if(nb > (USI_DATABUFFER_SIZE + usi_idx_datastart - usi_idx_dataend))
   {
-    ;
+    return 0;
   }
-  usi_status = 0x01;  /* Set UART status busy */
-  usi_databuffer = byte_reverse(data);
-  USIDR = 0xFF;       /* Write some high bits to USI data register */
-  USISR = (1 << USIOIF) | 0b1110; /* send high bits until counter overflow */
-  USICR |= (0 << USICS1)|(1 << USICS0)|(0 << USICLK); /* enable the usi clock source */
+  for(i=0 ; i<nb ; i++)
+  {
+//    usi_databuffer[((usi_idx_dataend + i) & USI_DATABUFFER_SIZE)]  = byte_reverse(data[i]);
+    usi_databuffer[((usi_idx_dataend + i) & USI_DATABUFFER_SIZE)]  = 0x0F;
+  }
+  cli();
+  usi_idx_dataend += nb;
+  if(usi_status == 0)
+  {
+    usi_status = 0x01;  /* Set UART status busy */
+    USIDR = 0xF0;       /* Write some high bits to USI data register */
+    USISR = (1 << USIOIF) | 0b1110; /* send high bits until counter overflow */
+    USICR |= (0 << USICS1)|(1 << USICS0)|(0 << USICLK); /* enable the usi clock source */
+  }
+  sei();
+  return nb;
+}
+
+int8_t usi_uart_transmit_msg(uart_msg_t* msg)
+{
+  uint8_t* dataptr = (uint8_t*)msg;
+  int8_t nb = msg->nb + 2;
+  if(usi_uart_transmit(dataptr, nb) > 0)
+  {
+    return 1;
+  }
+  return 0;
 }
 
 void tcnt1_init_100ms()
@@ -139,15 +185,12 @@ void tcnt1_init_100ms()
 
 ISR(ADC_vect)
 {
-  uint16_t result;
-  result = 0x0000;
-  result |= (uint16_t)ADCL;
-  result |= ((uint16_t)ADCH) << 8;
-  adcresults[adcchannel] = result;
+  adcresults[adcchannel*2] = ADCL;
+  adcresults[adcchannel*2 + 1] = ADCH;
   adcchannel++;
   adcchannel &= 0b00000001;
   ADMUX  = 0b11000000 | adcchannel;
-  /*  Start the next conversion */ 
+  // Start the next conversion 
   ADCSRA |= (1 << ADSC);
 }
 
@@ -174,29 +217,36 @@ ISR(USI_START_vect)
 
 ISR(USI_OVF_vect)
 {
+  uint8_t c;
   switch(usi_status)
   {
     case 1:
     {
       /* Write a high bit, the start bit and the first 6 data bits to USI Data Register */
-      USIDR = 0b10000000 | (usi_databuffer >> 2);
-      USISR = (1 << USIOIF) | 0b1010;  /* send 6 bits (1 x high, 1 x start bit, 4 of the data bits) */
-      if(PORTB & 0b00001000)
-      {
-        PORTB &= 0b11110111;
-      }
-      else
-      {
-        PORTB |= 0b00001000;
-      }
+      c = usi_databuffer[usi_idx_datastart & USI_DATABUFFER_SIZE];
+      // USIDR = 0b10000000 | (c >> 2);
+      USIDR = 0b00000000 | (c >> 2);
+      //USISR = (1 << USIOIF) | 0b1010;  /* send 6 bits (1 x high, 1 x start bit, 4 of the data bits) */
+      USISR = (1 << USIOIF) | 0b1011;  /* send 5 bits (1 x start bit, 4 of the data bits) */
       usi_status = 2;
       break;
     }
     case 2:
     {
-      USIDR = (usi_databuffer << 4) | 0b00001111;  /* write the data to the bus */
+      c = usi_databuffer[usi_idx_datastart & USI_DATABUFFER_SIZE];
+      USIDR = (c << 4) | 0b00001111;  /* write the lower 4 data bits and stop bits */
       USISR = (1 << USIOIF) | 0b1010;      /* send 6 bits (4 data and 2 stop bits) */
-      usi_status = 3;
+      usi_idx_datastart++;
+      if(usi_idx_datastart == usi_idx_dataend)
+      {
+        usi_idx_dataend &= USI_DATABUFFER_SIZE;
+        usi_idx_datastart = usi_idx_dataend;
+        usi_status = 3;
+      }
+      else
+      {
+        usi_status = 1;
+      }
       break;
     }
     default:
