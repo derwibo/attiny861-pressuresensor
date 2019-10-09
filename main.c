@@ -1,6 +1,5 @@
 /* Messprogramm fuer eine Messung mit
-   Hydac Drucksensor
-   Contrinex Induktiver Naeherungsschalter
+   2 x Hydac Drucksensor
 */
 
 #include <avr/io.h>
@@ -21,6 +20,7 @@ void usi_uart_init();
 int8_t usi_uart_transmit(uint8_t* data, int8_t nb);
 int8_t usi_uart_transmit_msg(uart_msg_t* msg);
 void tcnt1_init_100ms();
+void tcnt1_init_1ms();
 
 volatile uint8_t usi_status;
 #define USI_DATABUFFER_SIZE 0x0F
@@ -31,7 +31,12 @@ volatile int8_t usi_idx_dataend;
 volatile uint8_t adcresults[8];
 volatile uint8_t adcchannel;
 
+volatile int16_t main_timer = 0;
 volatile uint8_t timer_signal;
+
+/* The Timer TCNT1 is Setup with 1 ms rate. The main loop for sending the values
+   over the serial line can be adjusted with this constant: */
+#define MAIN_CYCLE_TIME 100 // ms
 
 uart_msg_t datamsg;
 
@@ -41,20 +46,22 @@ int main(void)
 /* CONFIGURE I/O PINS, all unused Port pins as input with pull up */
 
   DDRA  = 0b00000000;
-  PORTA = 0b11111100;  
+  PORTA = 0b11100000;  
 
   DDRB  = 0b00001010;
   PORTB = 0b01110100;
 
   usi_uart_init();
-  tcnt1_init_100ms();
+//  tcnt1_init_100ms();
+  tcnt1_init_1ms();
 
 /* Configure and Enable the ADC */
-  ADCSRA = 0b10001011;
+  ADCSRA = 0b10001101; // (1 << ADEN)|(1 << ADIE)|(101 << ADPS0);
   DIDR0  = 0b00011111;
   DIDR1  = 0b00000000;
  
-  ADMUX  = 0b11000000;
+  adcchannel = 0;
+  ADMUX  = (1 << REFS1)|(1 << REFS0) | adcchannel;
   ADCSRB = (1 << REFS2);
 
   timer_signal = 0;
@@ -80,6 +87,7 @@ int main(void)
 
       usi_uart_transmit_msg(&datamsg);
 
+      // Let an LED on PB3 blink
       if(PORTB & 0b00001000)
       {
         PORTB &= 0b11110111;
@@ -89,9 +97,9 @@ int main(void)
         PORTB |= 0b00001000;
       }
     }
-    sleep_enable();
-    sleep_cpu();
-    sleep_disable();
+//    sleep_enable();
+//    sleep_cpu();
+//    sleep_disable();
   }
 
   return 0;
@@ -100,6 +108,20 @@ int main(void)
 void tcnt0_init_9600baud()
 {
   OCR0A = 104;
+  TCCR0A = 0b00000001; /* (1 << CTC0) */
+  TCCR0B = (0 << CS02)|(1 << CS01)|(0 << CS00);  /* Clock Select: Prescaling 8 */
+}
+
+void tcnt0_init_19200baud()
+{
+  OCR0A = 52;
+  TCCR0A = 0b00000001; /* (1 << CTC0) */
+  TCCR0B = (0 << CS02)|(1 << CS01)|(0 << CS00);  /* Clock Select: Prescaling 8 */
+}
+
+void tcnt0_init_38400baud()
+{
+  OCR0A = 26;
   TCCR0A = 0b00000001; /* (1 << CTC0) */
   TCCR0B = (0 << CS02)|(1 << CS01)|(0 << CS00);  /* Clock Select: Prescaling 8 */
 }
@@ -113,7 +135,9 @@ void usi_uart_init()
  the Compare Match function.
 */
   DDRB  |= 0b00000010;
-  tcnt0_init_9600baud();
+  //tcnt0_init_9600baud();
+  tcnt0_init_19200baud();
+  //tcnt0_init_38400baud();
   USICR = (1 << USIOIE) | (1 << USIWM0);   /* enable the usi, except the clock source */
 }
 
@@ -164,19 +188,31 @@ inline int8_t usi_uart_transmit_msg(uart_msg_t* msg)
 void tcnt1_init_100ms()
 {
   TCCR1A = 0b00000000;
-/*  TCCR1B = 0b00001010;*/ /* enable the timer with prescaler 512 */
-//  TCCR1B = 0b00001111; /* enable the timer with prescaler 16384 */
-  TCCR1B = 0b00001101; /* enable the timer with prescaler 4096 */
 
-/*  TCCR1C = 0b00000000;
+  TCCR1B = 0b00001101; /* enable the timer with prescaler 4096 */
+  TCCR1C = 0b00000000;
   TCCR1D = 0b00000000;
   TCCR1E = 0b00000000;
   PLLCSR = 0b00000000;
   OCR1A  = 0b00000000;
-  OCR1B  = 0b00000000; */
+  OCR1B  = 0b00000000;
   OCR1C  = 195;        /* Set the TOP Value so that we will get 100 ms rate */
-//  OCR1C  = 244;        /* Set the TOP Value so that we will get 500 ms rate */
-/*  OCR1D  = 0b00000000; */
+  OCR1D  = 0b00000000;
+  TIMSK |= (1 << TOIE1);
+}
+
+void tcnt1_init_1ms()
+{
+  TCCR1A = 0b00000000;
+  TCCR1B = 0b00000111; /* enable the timer with prescaler 64 */
+  TCCR1C = 0b00000000;
+  TCCR1D = 0b00000000;
+  TCCR1E = 0b00000000;
+  PLLCSR = 0b00000000;
+  OCR1A  = 0b00000000;
+  OCR1B  = 0b00000000;
+  OCR1C  = 125;        /* Set the TOP Value so that we will get 1 ms rate */
+  OCR1D  = 0b00000000;
   TIMSK |= (1 << TOIE1);
 }
 
@@ -186,20 +222,23 @@ ISR(ADC_vect)
   adcresults[adcchannel*2 + 1] = ADCH;
   adcchannel++;
   adcchannel &= 0b00000001;
-  ADMUX  = 0b11000000 | adcchannel;
+  ADMUX  = (1 << REFS1)|(1 << REFS0) | adcchannel;
   // Start the next conversion 
   ADCSRA |= (1 << ADSC);
 }
 
 ISR(TIMER1_COMPA_vect)
 {
-//  TCNT1 = 0x00;
-//  timer_signal = 1;
+
 }
 
 ISR(TIMER1_OVF_vect)
 {
-  timer_signal = 1;
+  if(--main_timer <= 0)
+  {
+    main_timer = MAIN_CYCLE_TIME;
+    timer_signal = 1;
+  }
 }
 
 ISR(TIMER0_OVF_vect)

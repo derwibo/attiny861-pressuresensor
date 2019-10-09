@@ -4,7 +4,10 @@ import tkinter as tk
 import threading
 import struct
 
-termatt = [0, 4, 3261, 35384, 13, 13, [b'\x03', b'\x1c', b'\x7f', b'\x15', b'\x04', 0, 1, b'\x00', b'\x11', b'\x13', b'\x1a', b'\x00', b'\x12', b'\x0f', b'\x17', b'\x16', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00']]
+#termatt = [0, 4, 3261, 35384, termios.B38400, termios.B38400, [b'\x03', b'\x1c', b'\x7f', b'\x15', b'\x04', 0, 1, b'\x00', b'\x11', b'\x13', b'\x1a', b'\x00', b'\x12', b'\x0f', b'\x17', b'\x16', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00']]
+termatt = [0, 4, 3261, 35384, termios.B19200, termios.B19200, [b'\x03', b'\x1c', b'\x7f', b'\x15', b'\x04', 0, 1, b'\x00', b'\x11', b'\x13', b'\x1a', b'\x00', b'\x12', b'\x0f', b'\x17', b'\x16', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00', b'\x00']]
+
+ttydev = '/dev/ttyUSB0'
 
 class MainApp:
     def __init__(self):
@@ -13,7 +16,7 @@ class MainApp:
         self.tty = None
         self.commthread = None
     def run(self):
-        self.tty = os.open('/dev/ttyUSB1', os.O_RDONLY)
+        self.tty = os.open(ttydev, os.O_RDONLY)
         attold = termios.tcgetattr(self.tty)
         termios.tcsetattr(self.tty, termios.TCSANOW, termatt)
         self.mainwnd = MainWnd(self.tk, self)
@@ -48,6 +51,7 @@ class CommThread(threading.Thread):
         self.exit  = False
     def run(self):
         self.exit = False
+        cnt = 0
         while(not self.exit):
             c = os.read(self.tty, 1)
             if len(c) > 0 and c[0] == 0x12 :
@@ -58,7 +62,8 @@ class CommThread(threading.Thread):
                 if len(bindata) == 8 :
                     # print('Data received')
                     data = struct.unpack('HHHH', bindata)
-                    string = '%x %x %x %x' % data
+                    cnt = cnt + 1
+                    string = '%d - ' % cnt + '%d %d %d %d' % data
                     if not self.exit :
                         self.owner.mainwnd.v.set(string)
                 else:
